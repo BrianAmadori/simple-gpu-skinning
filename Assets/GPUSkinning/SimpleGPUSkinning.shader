@@ -9,6 +9,7 @@ Shader "Unlit/GPUSkinningTest"
         Tags
         {
             "RenderType"="Opaque"
+            "LightMode"="Vertex"
         }
 
         Pass
@@ -19,18 +20,22 @@ Shader "Unlit/GPUSkinningTest"
 
             #include "UnityCG.cginc"
 
-            struct appdata
+            struct MeshInput
             {
                 float4 vertex : POSITION;
+                float3 normal : NORMAL;
+                float4 tangent : TANGENT;
                 float2 uv : TEXCOORD0;
-                float4 boneWeights01 : TANGENT;
-                float4 boneWeights23 : TEXCOORD1;
+                float4 boneWeights01 : TEXCOORD1;
+                float4 boneWeights23 : TEXCOORD2;
             };
 
-            struct v2f
+            struct Vertex2Fragment
             {
+                float3 normal : NORMAL;
                 float2 uv : TEXCOORD0;
                 float4 vertex : SV_POSITION;
+                float3 color : COLOR;
             };
 
             sampler2D _MainTex;
@@ -39,34 +44,71 @@ Shader "Unlit/GPUSkinningTest"
             float4x4 _Matrices[100];
             float4x4 _BindPoses[100];
 
-            v2f vert(appdata v)
+            float4x4 inverse(float4x4 input)
             {
-                v2f o;
+                #define minor(a,b,c) determinant(float3x3(input.a, input.b, input.c))
+                //determinant(float3x3(input._22_23_23, input._32_33_34, input._42_43_44))
+
+                float4x4 cofactors = float4x4(
+                    minor(_22_23_24, _32_33_34, _42_43_44),
+                    -minor(_21_23_24, _31_33_34, _41_43_44),
+                    minor(_21_22_24, _31_32_34, _41_42_44),
+                    -minor(_21_22_23, _31_32_33, _41_42_43),
+
+                    -minor(_12_13_14, _32_33_34, _42_43_44),
+                    minor(_11_13_14, _31_33_34, _41_43_44),
+                    -minor(_11_12_14, _31_32_34, _41_42_44),
+                    minor(_11_12_13, _31_32_33, _41_42_43),
+
+                    minor(_12_13_14, _22_23_24, _42_43_44),
+                    -minor(_11_13_14, _21_23_24, _41_43_44),
+                    minor(_11_12_14, _21_22_24, _41_42_44),
+                    -minor(_11_12_13, _21_22_23, _41_42_43),
+
+                    -minor(_12_13_14, _22_23_24, _32_33_34),
+                    minor(_11_13_14, _21_23_24, _31_33_34),
+                    -minor(_11_12_14, _21_22_24, _31_32_34),
+                    minor(_11_12_13, _21_22_23, _31_32_33)
+                );
+                #undef minor
+                return transpose(cofactors) / determinant(input);
+            }
+
+            Vertex2Fragment vert(MeshInput IN)
+            {
+                Vertex2Fragment o;
+
+                float4x4 localBoneMatrix0 = mul(mul(_WorldInverse, _Matrices[IN.boneWeights01.x]),
+                                                _BindPoses[IN.boneWeights01.x]);
+                float4x4 localBoneMatrix1 = mul(mul(_WorldInverse, _Matrices[IN.boneWeights01.z]),
+                                                _BindPoses[IN.boneWeights01.z]);
+                float4x4 localBoneMatrix2 = mul(mul(_WorldInverse, _Matrices[IN.boneWeights23.x]),
+                                                _BindPoses[IN.boneWeights23.x]);
+                float4x4 localBoneMatrix3 = mul(mul(_WorldInverse, _Matrices[IN.boneWeights23.z]),
+                                                _BindPoses[IN.boneWeights23.z]);
 
                 // Skin with 4 weights per vertex
-                float4 pos =
-                    mul(mul(_Matrices[v.boneWeights01.x], _BindPoses[v.boneWeights01.x]), v.vertex) * v.boneWeights01.y
-                    +
-                    mul(mul(_Matrices[v.boneWeights01.z], _BindPoses[v.boneWeights01.z]), v.vertex) * v.boneWeights01.w
-                    +
-                    mul(mul(_Matrices[v.boneWeights23.x], _BindPoses[v.boneWeights23.x]), v.vertex) * v.boneWeights23.y
-                    +
-                    mul(mul(_Matrices[v.boneWeights23.z], _BindPoses[v.boneWeights23.z]), v.vertex) * v.boneWeights23.w;
+                float4x4 finalPose = mul(localBoneMatrix0, IN.boneWeights01.y);
+                finalPose += mul(localBoneMatrix1, IN.boneWeights01.w);
+                finalPose += mul(localBoneMatrix2, IN.boneWeights23.y);
+                finalPose += mul(localBoneMatrix3, IN.boneWeights23.w);
 
-                // Substract the renderer position, as we want to only have bone positions into account.
-                // If we do not do this, when moving the outer parents the world position will be computed twice.
-                // (one for the bones, one for the renderer).
-                pos = mul(_WorldInverse, pos);
+                float4 pos = mul(finalPose, float4(IN.vertex.xyz, 1.0));
+                float3x3 trans = transpose(inverse(finalPose));
+                float3 normal = mul(trans, IN.normal);
 
+                o.normal = normalize(normal);
                 o.vertex = UnityObjectToClipPos(pos);
-                o.uv = TRANSFORM_TEX(v.uv, _MainTex);
+                o.color = ShadeVertexLightsFull(o.vertex, o.normal, 4, false);
+
+                o.uv = TRANSFORM_TEX(IN.uv, _MainTex);
                 return o;
             }
 
-            fixed4 frag(v2f i) : SV_Target
+            fixed4 frag(Vertex2Fragment IN) : SV_Target
             {
-                fixed4 col = tex2D(_MainTex, i.uv);
-                return col;
+                float3 col = tex2D(_MainTex, IN.uv) * IN.color;
+                return fixed4(col, 1);
             }
             ENDCG
         }

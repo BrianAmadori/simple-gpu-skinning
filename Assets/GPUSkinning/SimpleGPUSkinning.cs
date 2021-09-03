@@ -48,8 +48,8 @@ public class SimpleGPUSkinning
             bone23data[i].w = boneWeight.weight3;
         }
 
-        skr.sharedMesh.tangents = bone01data;
-        skr.sharedMesh.SetUVs(1, bone23data);
+        skr.sharedMesh.SetUVs(1, bone01data);
+        skr.sharedMesh.SetUVs(2, bone23data);
     }
 
     public SimpleGPUSkinning (SkinnedMeshRenderer skr, Material gpuSkinningMaterial)
@@ -83,7 +83,7 @@ public class SimpleGPUSkinning
             boneMatrices[i] = bone.localToWorldMatrix;
         }
 
-        skinningMaterial.SetMatrix(RENDERER_WORLD_INVERSE, meshRenderer.transform.worldToLocalMatrix);
+        skinningMaterial.SetMatrix(RENDERER_WORLD_INVERSE, meshRenderer.worldToLocalMatrix);
         skinningMaterial.SetMatrixArray(BONE_MATRICES, boneMatrices.ToArray());
     }
 }
